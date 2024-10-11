@@ -1,0 +1,62 @@
+stages:
+  - validate
+  - key-deploy
+
+image: willhallonline/ansible:latest
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  GIT_STRATEGY: clone
+
+before_script:
+  - printenv
+  - ansible --version
+  - ansible-lint --version
+  - git remote -v
+  - if git remote get-url origin; then
+      git remote set-url origin https://$user_name:$user_token@gitlab.host.name/$user_name/key-deployment.git;
+    fi
+  - git fetch origin
+  - eval $(ssh-agent -s)
+
+validate-yaml:
+  stage: validate
+  tags:
+    - ansible
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - echo 'Validating YAML...'
+    - git clone https://$user_name:$user_token@gitlab.host.name/$user_name/key-deployment.git
+    - cd key-deployment/ansible/
+    - ls -lsah
+    - yamllint playbook.yml hosts.yml
+    - ansible --version
+    - ansible-lint --version
+    
+key-deploy:
+  stage: key-deploy
+  tags:
+    - ansible
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - when: always
+  script:
+    - git clone https://$user_name:$user_token@gitlab.host.name/$user_name/key-deployment.git
+    - cd key-deployment/ansible/
+    - ls -lsah
+    - echo 'Starting keys deployment'
+    - |
+      if [ -n "$HOST_IP" ]; then
+        echo "Using HOST_IP: $HOST_IP"
+        sed -i -e "s/server/$HOST_IP/g" hosts.yml
+        INVENTORY_FILE="hosts.yml"
+        cat hosts.yml
+      else
+        echo "HOST_IP not set, using default hosts-full.yml"
+        INVENTORY_FILE="hosts-full.yml"
+        cat hosts-full.yml
+      fi
+    - ansible-playbook -vvvv --inventory "$INVENTORY_FILE" playbook.yml
+  when: manual
+  allow_failure: false
